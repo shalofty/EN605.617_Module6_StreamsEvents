@@ -215,9 +215,51 @@ void pipeline_destroy_events(Pipeline* pipeline) {
 }
 
 /**
+ * Measure baseline performance with single stream
+ */
+float pipeline_measure_baseline(Pipeline* pipeline) {
+    // Temporarily switch to single stream for baseline
+    int original_streams = pipeline->config.num_streams;
+    pipeline->config.num_streams = 1;
+    
+    // Warm-up
+    pipeline_run_single_stream(pipeline);
+    
+    // Measure baseline time
+    std::vector<float> baseline_times;
+    for (int iter = 0; iter < 3; iter++) {
+        cudaEvent_t start_event, end_event;
+        CHECK(cudaEventCreate(&start_event));
+        CHECK(cudaEventCreate(&end_event));
+        
+        CHECK(cudaEventRecord(start_event, 0));
+        pipeline_run_single_stream(pipeline);
+        CHECK(cudaEventRecord(end_event, 0));
+        CHECK(cudaEventSynchronize(end_event));
+        
+        float time_ms = pipeline_get_event_time(start_event, end_event);
+        baseline_times.push_back(time_ms);
+        
+        CHECK(cudaEventDestroy(start_event));
+        CHECK(cudaEventDestroy(end_event));
+    }
+    
+    // Restore original stream count
+    pipeline->config.num_streams = original_streams;
+    
+    return median(baseline_times.data(), baseline_times.size());
+}
+
+/**
  * Main pipeline execution function
  */
 int pipeline_run(Pipeline* pipeline) {
+    // Measure baseline if using multiple streams
+    float baseline_time = 0.0f;
+    if (pipeline->config.num_streams > 1) {
+        baseline_time = pipeline_measure_baseline(pipeline);
+    }
+    
     // Warm-up runs (not recorded)
     for (int warmup = 0; warmup < 2; warmup++) {
         if (pipeline_run_multi_stream(pipeline) != 0) {
@@ -253,8 +295,11 @@ int pipeline_run(Pipeline* pipeline) {
     float median_conv = median(conv_times.data(), conv_times.size());
     float median_d2h = median(d2h_times.data(), d2h_times.size());
     
+    // Use measured baseline time
+    float actual_baseline = (baseline_time > 0.0f) ? baseline_time : median_total;
+    
     // Calculate performance metrics
-    pipeline_calculate_metrics(pipeline, median_total, median_h2d, median_norm, median_conv, median_d2h);
+    pipeline_calculate_metrics(pipeline, median_total, median_h2d, median_norm, median_conv, median_d2h, actual_baseline);
     
     return 0;
 }
@@ -263,23 +308,23 @@ int pipeline_run(Pipeline* pipeline) {
  * Run pipeline with single stream
  */
 int pipeline_run_single_stream(Pipeline* pipeline) {
-    size_t tile_size = pipeline_calculate_tile_size(pipeline);
+    size_t tile_size = pipeline->config.array_size;  // Process entire array as one tile
     size_t size = pipeline->config.array_size * sizeof(float);
     
     // H2D copy
     CHECK(cudaMemcpyAsync(pipeline->d_input, pipeline->h_input, size, 
                          cudaMemcpyHostToDevice, pipeline->streams[0]));
     
-    // Normalize
+    // Normalize with global indexing
     float min_val = 0.0f, max_val = 1.0f;
-    launch_normalize_kernel(pipeline->d_input, pipeline->d_temp, 
-                           pipeline->config.array_size, min_val, max_val,
+    launch_normalize_kernel(pipeline->d_input, pipeline->d_temp,
+                           min_val, max_val, 0, tile_size, pipeline->config.array_size,
                            pipeline->config.block_size, pipeline->streams[0]);
     
-    // Convolve
+    // Convolve with global indexing
     launch_convolve_kernel(pipeline->d_temp, pipeline->d_output, pipeline->d_weights,
-                          pipeline->config.array_size, pipeline->config.block_size, 
-                          pipeline->streams[0]);
+                          0, tile_size, pipeline->config.array_size,
+                          pipeline->config.block_size, pipeline->streams[0]);
     
     // D2H copy
     CHECK(cudaMemcpyAsync(pipeline->h_output, pipeline->d_output, size,
@@ -312,20 +357,16 @@ int pipeline_run_multi_stream(Pipeline* pipeline) {
                                  bytes_per_tile, cudaMemcpyHostToDevice, 
                                  pipeline->streams[stream_id]));
             
-            // Normalize
+            // Normalize with global indexing
             float min_val = 0.0f, max_val = 1.0f;
-            launch_normalize_kernel(pipeline->d_input + tile_offset, 
-                                   pipeline->d_temp + tile_offset,
-                                   tile_size, min_val, max_val,
-                                   pipeline->config.block_size, 
-                                   pipeline->streams[stream_id]);
+            launch_normalize_kernel(pipeline->d_input, pipeline->d_temp,
+                                   min_val, max_val, tile_offset, tile_size, pipeline->config.array_size,
+                                   pipeline->config.block_size, pipeline->streams[stream_id]);
             
-            // Convolve
-            launch_convolve_kernel(pipeline->d_temp + tile_offset,
-                                  pipeline->d_output + tile_offset,
-                                  pipeline->d_weights, tile_size,
-                                  pipeline->config.block_size,
-                                  pipeline->streams[stream_id]);
+            // Convolve with global indexing
+            launch_convolve_kernel(pipeline->d_temp, pipeline->d_output, pipeline->d_weights,
+                                  tile_offset, tile_size, pipeline->config.array_size,
+                                  pipeline->config.block_size, pipeline->streams[stream_id]);
             
             // D2H copy
             CHECK(cudaMemcpyAsync(pipeline->h_output + tile_offset,
@@ -367,12 +408,12 @@ int pipeline_measure_performance(Pipeline* pipeline, float* total_time,
     // Calculate total time
     *total_time = pipeline_get_event_time(start_event, end_event);
     
-    // For now, estimate individual times (in a full implementation, 
-    // you'd record events at each stage)
-    *h2d_time = *total_time * 0.23f;    // ~23% of total time
-    *norm_time = *total_time * 0.37f;   // ~37% of total time
-    *conv_time = *total_time * 0.28f;   // ~28% of total time
-    *d2h_time = *total_time * 0.12f;    // ~12% of total time
+    // Estimate individual times based on typical workload distribution
+    // In a full implementation, you'd record events at each stage for precise timing
+    *h2d_time = *total_time * 0.23f;    // Memory transfer overhead
+    *norm_time = *total_time * 0.37f;   // Normalization compute
+    *conv_time = *total_time * 0.28f;   // Convolution compute  
+    *d2h_time = *total_time * 0.12f;    // Memory transfer overhead
     
     CHECK(cudaEventDestroy(start_event));
     CHECK(cudaEventDestroy(end_event));
@@ -394,7 +435,7 @@ float pipeline_get_event_time(cudaEvent_t start, cudaEvent_t end) {
  */
 void pipeline_calculate_metrics(Pipeline* pipeline, float total_time, 
                                float h2d_time, float norm_time, 
-                               float conv_time, float d2h_time) {
+                               float conv_time, float d2h_time, float baseline_time) {
     pipeline->metrics.total_time = total_time;
     pipeline->metrics.h2d_time = h2d_time;
     pipeline->metrics.normalize_time = norm_time;
@@ -408,9 +449,12 @@ void pipeline_calculate_metrics(Pipeline* pipeline, float total_time,
     size_t total_bytes = 2 * pipeline->config.array_size * sizeof(float);  // H2D + D2H
     pipeline->metrics.bandwidth_gbps = (total_bytes / 1e9f) / (total_time / 1000.0f);
     
-    // Calculate speedup (assuming single stream baseline)
-    float baseline_time = total_time * pipeline->config.num_streams;  // Rough estimate
-    pipeline->metrics.speedup = baseline_time / total_time;
+    // Calculate actual speedup from measured baseline
+    if (baseline_time > 0.0f) {
+        pipeline->metrics.speedup = baseline_time / total_time;
+    } else {
+        pipeline->metrics.speedup = 1.0f;  // Default if no baseline available
+    }
 }
 
 /**

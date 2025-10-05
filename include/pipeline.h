@@ -61,7 +61,7 @@ int pipeline_measure_performance(Pipeline* pipeline, float* total_time,
 float pipeline_get_event_time(cudaEvent_t start, cudaEvent_t end);
 void pipeline_calculate_metrics(Pipeline* pipeline, float total_time, 
                                float h2d_time, float norm_time, 
-                               float conv_time, float d2h_time);
+                               float conv_time, float d2h_time, float baseline_time);
 
 // Verification
 int pipeline_verify_correctness(Pipeline* pipeline);
