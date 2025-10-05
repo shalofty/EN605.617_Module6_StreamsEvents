@@ -1,0 +1,34 @@
+# Build artifacts
+*.o
+*.exe
+pipeline
+debug_device
+
+# IDE files
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
+
+# CUDA specific
+*.cubin
+*.fatbin
+*.ptx
+
+# Results (keep structure but not large files)
+results/performance_data/*.csv
+results/screenshots/*.png
+results/screenshots/*.jpg
+results/screenshots/*.gif
+
+# Keep directory structure
+!results/performance_data/.gitkeep
+!results/screenshots/.gitkeep

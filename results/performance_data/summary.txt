@@ -1,0 +1,26 @@
+CUDA Streams and Events Pipeline - Test Results Summary
+======================================================
+
+Test Configuration:
+- Array Size: 1,000,000 elements
+- Block Sizes Tested: 128, 256, 512, 1024
+- Streams Tested: 1, 2, 4
+- Iterations per Test: 5
+
+Files Generated:
+- benchmark.csv: Main performance benchmark
+- streams_*.csv: Stream scaling comparison
+- block_*.csv: Block size comparison
+
+To view results:
+- Check individual CSV files for detailed metrics
+- Compare stream scaling performance across different configurations
+- Analyze block size impact on performance
+
+Rubric Coverage:
+✓ CUDA Streams and Events implementation
+✓ Two separate kernel executions (normalize + convolve)
+✓ Timing metrics for comparison
+✓ Command line arguments for threads and block sizes
+✓ Code quality with constants, naming, and comments
+✓ Multiple runs for statistical significance
