@@ -23,12 +23,6 @@ Thumbs.db
 *.fatbin
 *.ptx
 
-# Results (keep structure but not large files)
-results/performance_data/*.csv
-results/screenshots/*.png
-results/screenshots/*.jpg
-results/screenshots/*.gif
-
 # Keep directory structure
 !results/performance_data/.gitkeep
 !results/screenshots/.gitkeep

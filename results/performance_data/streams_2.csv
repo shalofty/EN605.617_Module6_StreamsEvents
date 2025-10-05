@@ -1,0 +1,2 @@
+streams,block_size,array_size,iterations,total_ms,h2d_ms,norm_ms,conv_ms,d2h_ms,throughput_mel_s,bandwidth_gbps,speedup
+2,256,1000000,5,0.51,0.12,0.19,0.14,0.06,1973.73,15.79,1.28
